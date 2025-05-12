@@ -1,27 +1,65 @@
 {
   "name": "cli-tray",
   "version": "0.1.0",
+  "description": "Aplicação tray para Windows com funções de integração e comunicação",
+  "main": "main/index.js",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src",
+    "electron": "node scripts/run-electron.js",
+    "electron-dev": "concurrently --names \"VITE,ELECTRON\" --prefix-colors \"blue,green\" --kill-others \"vite --port 5176\" \"node scripts/start-electron.js\"",
+    "electron-debug": "ELECTRON_ENABLE_LOGGING=true electron .",
+    "start-prod": "npm run build && npm run electron",
+    "package": "npm run build && electron-builder build --win",
+    "postinstall": "electron-builder install-app-deps",
+    "electron-build": "electron-builder"
   },
   "dependencies": {
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "next": "15.3.0"
+    "electron-serve": "^1.2.0",
+    "node-schedule": "^2.1.1",
+    "odbc": "^2.4.9",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-icons": "^5.5.0",
+    "react-router-dom": "^7.5.0",
+    "sqlite3": "^5.1.6"
   },
   "devDependencies": {
-    "typescript": "^5",
     "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "@tailwindcss/postcss": "^4",
-    "tailwindcss": "^4",
-    "eslint": "^9",
-    "eslint-config-next": "15.3.0",
-    "@eslint/eslintrc": "^3"
+    "@types/node-schedule": "^2.1.5",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10",
+    "concurrently": "^8.2.2",
+    "electron": "^29.0.1",
+    "electron-builder": "^24.9.1",
+    "electron-rebuild": "^3.2.9",
+    "eslint": "^8",
+    "eslint-plugin-react": "^7.33.2",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "postcss": "^8",
+    "tailwindcss": "^3.3.0",
+    "vite": "^5.0.12",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.yourcompany.clitray",
+    "productName": "ClI Tray Agent",
+    "files": [
+      "main",
+      "dist/**/*",
+      "node_modules",
+      "public"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "public/icon.ico"
+    }
   }
 }
