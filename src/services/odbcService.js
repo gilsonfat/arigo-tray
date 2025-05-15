@@ -89,6 +89,37 @@ async function connect(connectionId) {
   console.log(`[ODBC] Iniciando conexão com banco ID ${connectionId}...`);
   
   try {
+    // Garantir que connectionId seja um número
+    let numericId;
+    if (typeof connectionId === 'string') {
+      numericId = parseInt(connectionId, 10);
+      console.log(`[ODBC] Convertendo connectionId de string para número: ${numericId}`);
+    } else if (typeof connectionId === 'number') {
+      numericId = connectionId;
+    } else if (typeof connectionId === 'object') {
+      // Se for um objeto, tenta extrair o ID
+      console.error(`[ODBC] Erro: connectionId é um objeto: ${JSON.stringify(connectionId)}`);
+      if (connectionId && typeof connectionId.id === 'number') {
+        numericId = connectionId.id;
+        console.log(`[ODBC] Usando connectionId.id como ID numérico: ${numericId}`);
+      } else if (connectionId && typeof connectionId.id === 'string') {
+        numericId = parseInt(connectionId.id, 10);
+        console.log(`[ODBC] Convertendo connectionId.id de string para número: ${numericId}`);
+      } else {
+        throw new Error(`ID de conexão inválido (objeto): ${JSON.stringify(connectionId)}`);
+      }
+    } else {
+      throw new Error(`Tipo de ID de conexão inválido: ${typeof connectionId}`);
+    }
+    
+    if (isNaN(numericId)) {
+      throw new Error(`ID de conexão não é um número válido: ${connectionId}`);
+    }
+    
+    // Usar o ID numérico a partir daqui
+    connectionId = numericId;
+    console.log(`[ODBC] Usando connectionId numérico: ${connectionId}`);
+
     // 1. Verifica se já existe uma conexão em cache
     if (connectionsCache.has(connectionId)) {
       console.log(`[ODBC] Verificando conexão em cache para o ID ${connectionId}...`);
@@ -492,6 +523,37 @@ async function executeQuery(connectionId, sql, params = {}) {
     throw new Error('Consulta SQL inválida ou vazia');
   }
   
+  // Garantir que connectionId seja um número
+  let numericId;
+  if (typeof connectionId === 'string') {
+    numericId = parseInt(connectionId, 10);
+    console.log(`[ODBC] Convertendo connectionId de string para número: ${numericId}`);
+  } else if (typeof connectionId === 'number') {
+    numericId = connectionId;
+  } else if (typeof connectionId === 'object') {
+    // Se for um objeto, tenta extrair o ID
+    console.error(`[ODBC] Erro: connectionId é um objeto: ${JSON.stringify(connectionId)}`);
+    if (connectionId && typeof connectionId.id === 'number') {
+      numericId = connectionId.id;
+      console.log(`[ODBC] Usando connectionId.id como ID numérico: ${numericId}`);
+    } else if (connectionId && typeof connectionId.id === 'string') {
+      numericId = parseInt(connectionId.id, 10);
+      console.log(`[ODBC] Convertendo connectionId.id de string para número: ${numericId}`);
+    } else {
+      throw new Error(`ID de conexão inválido (objeto): ${JSON.stringify(connectionId)}`);
+    }
+  } else {
+    throw new Error(`Tipo de ID de conexão inválido: ${typeof connectionId}`);
+  }
+  
+  if (isNaN(numericId)) {
+    throw new Error(`ID de conexão não é um número válido: ${connectionId}`);
+  }
+  
+  // Usar o ID numérico a partir daqui
+  connectionId = numericId;
+  console.log(`[ODBC] Usando connectionId numérico: ${connectionId}`);
+  
   // Inicializa contadores e registros de tempo
   const startTime = Date.now();
   let connection = null;
@@ -505,6 +567,59 @@ async function executeQuery(connectionId, sql, params = {}) {
       sql = replaceQueryParams(sql, params);
     }
     
+    // Adaptar sintaxe LIMIT para SQL Anywhere (que usa TOP em vez de LIMIT)
+    const limitRegex = /\s+LIMIT\s+(\d+)(?:\s*,\s*(\d+))?/i;
+    const limitMatch = sql.match(limitRegex);
+    
+    if (limitMatch) {
+      console.log(`[ODBC] Detectada cláusula LIMIT, adaptando para SQL Anywhere`);
+      
+      let modifiedSql = sql;
+      const limit = parseInt(limitMatch[1], 10);
+      const offset = limitMatch[2] ? parseInt(limitMatch[2], 10) : null;
+      
+      if (offset) {
+        // SQL Anywhere não suporta LIMIT com offset diretamente
+        // Precisamos usar uma subconsulta ou procedimento armazenado
+        console.log(`[ODBC] Cláusula LIMIT com offset não é diretamente suportada em SQL Anywhere`);
+        console.log(`[ODBC] Tentando adaptar usando ROW_NUMBER() ou outra técnica`);
+        
+        // Verificar se a consulta já tem ORDER BY, senão adicionar um para garantir consistência
+        const hasOrderBy = /\s+ORDER\s+BY\s+/i.test(sql);
+        
+        if (!hasOrderBy) {
+          // Se não tiver ORDER BY, adicionamos um padrão usando a primeira coluna
+          // Isso é necessário para o ROW_NUMBER() funcionar consistentemente
+          const selectMatch = sql.match(/SELECT\s+(?:TOP\s+\d+\s+)?(.+?)\s+FROM/i);
+          if (selectMatch && selectMatch[1]) {
+            const firstColumn = selectMatch[1].split(',')[0].trim();
+            modifiedSql = sql.replace(limitRegex, '') + ` ORDER BY ${firstColumn}`;
+          } else {
+            modifiedSql = sql.replace(limitRegex, '');
+          }
+        } else {
+          modifiedSql = sql.replace(limitRegex, '');
+        }
+        
+        // Embrulhar em uma subconsulta com ROW_NUMBER()
+        modifiedSql = `
+          SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER (ORDER BY (SELECT 1)) AS rownum
+            FROM (
+              ${modifiedSql}
+            ) AS innerQuery
+          ) AS outerQuery
+          WHERE rownum > ${offset} AND rownum <= ${offset + limit}
+        `;
+      } else {
+        // Substituir LIMIT por TOP
+        modifiedSql = sql.replace(/SELECT/i, `SELECT TOP ${limit}`).replace(limitRegex, '');
+      }
+      
+      console.log(`[ODBC] SQL adaptado: ${modifiedSql.substring(0, 100)}${modifiedSql.length > 100 ? '...' : ''}`);
+      sql = modifiedSql;
+    }
+    
     // Conecta ao banco de dados
     console.time(`[ODBC] Tempo para estabelecer conexão para consulta`);
     connection = await connect(connectionId);
@@ -513,28 +628,54 @@ async function executeQuery(connectionId, sql, params = {}) {
     // Executa a consulta
     console.time(`[ODBC] Tempo de execução da consulta SQL`);
     console.log(`[ODBC] Executando consulta SQL...`);
-    const result = await connection.query(sql);
-    console.timeEnd(`[ODBC] Tempo de execução da consulta SQL`);
     
-    // Registra o sucesso no log
-    const executionTime = Date.now() - startTime;
-    const recordCount = Array.isArray(result) ? result.length : 0;
-    
-    console.log(`[ODBC] Consulta executada com sucesso: ${recordCount} registros retornados em ${executionTime}ms`);
-    
-    // Exibe amostra dos primeiros registros (se houver)
-    if (recordCount > 0) {
-      const sample = result.slice(0, Math.min(3, recordCount));
-      console.log(`[ODBC] Amostra de ${sample.length} registros:`, sample);
+    // Adicionar tratamento específico para erros comuns da sintaxe SQL
+    try {
+      const result = await connection.query(sql);
+      console.timeEnd(`[ODBC] Tempo de execução da consulta SQL`);
+      
+      // Registra o sucesso no log
+      const executionTime = Date.now() - startTime;
+      const recordCount = Array.isArray(result) ? result.length : 0;
+      
+      console.log(`[ODBC] Consulta executada com sucesso: ${recordCount} registros retornados em ${executionTime}ms`);
+      
+      // Exibe amostra dos primeiros registros (se houver)
+      if (recordCount > 0) {
+        const sample = result.slice(0, Math.min(3, recordCount));
+        console.log(`[ODBC] Amostra de ${sample.length} registros:`, sample);
+      }
+      
+      // Registra evento de consulta no log
+      await log(
+        'info', 
+        `Consulta executada com sucesso: ${recordCount} registros retornados em ${executionTime}ms`
+      );
+      
+      return result;
+    } catch (queryError) {
+      console.timeEnd(`[ODBC] Tempo de execução da consulta SQL`);
+      console.error(`[ODBC] Erro específico da consulta SQL: ${queryError.message}`);
+      
+      // Verificar erros específicos de sintaxe e tentar corrigir
+      const errorMsg = queryError.message.toLowerCase();
+      
+      if (errorMsg.includes('syntax') || errorMsg.includes('sintaxe')) {
+        // Erros de sintaxe - tentar detectar problemas específicos
+        if (errorMsg.includes('limit')) {
+          console.log(`[ODBC] Erro relacionado à sintaxe LIMIT - o banco pode não suportar esta cláusula`);
+          throw new Error('Erro de sintaxe: A cláusula LIMIT não é suportada neste banco de dados. Use SELECT TOP N ou consulte a documentação do SQL Anywhere para paginação.');
+        }
+        
+        if (errorMsg.includes('top') && sql.toLowerCase().includes('select top')) {
+          console.log(`[ODBC] Erro relacionado à sintaxe TOP - verificando formato correto`);
+          throw new Error('Erro de sintaxe: Verifique o formato correto da cláusula TOP para SQL Anywhere.');
+        }
+      }
+      
+      // Se chegamos aqui, propagar o erro original
+      throw queryError;
     }
-    
-    // Registra evento de consulta no log
-    await log(
-      'info', 
-      `Consulta executada com sucesso: ${recordCount} registros retornados em ${executionTime}ms`
-    );
-    
-    return result;
   } catch (error) {
     // Calcula o tempo total até o erro
     const executionTime = Date.now() - startTime;
@@ -548,6 +689,10 @@ async function executeQuery(connectionId, sql, params = {}) {
     // Detecta e formata erros comuns de SQL
     if (originalErrorMsg.includes('syntax') || originalErrorMsg.includes('sintaxe')) {
       errorMessage = `Erro de sintaxe SQL: Verifique a sintaxe da sua consulta. ${error.message}`;
+      // Verificar se é um erro específico de LIMIT
+      if (originalErrorMsg.includes('limit')) {
+        errorMessage = `Erro de sintaxe SQL: A cláusula LIMIT não é suportada neste banco. Use SELECT TOP N para SQL Anywhere. ${error.message}`;
+      }
     } 
     else if (originalErrorMsg.includes('column') && 
              (originalErrorMsg.includes('not found') || originalErrorMsg.includes('unknown'))) {
@@ -873,6 +1018,56 @@ async function testQuery(sql, connectionId) {
       connectionDetails.driver = 'SQL Anywhere 17';
     }
     
+    // Adaptar sintaxe LIMIT para SQL Anywhere (que usa TOP em vez de LIMIT)
+    let sqlAjustado = sql;
+    const limitRegex = /\s+LIMIT\s+(\d+)(?:\s*,\s*(\d+))?/i;
+    const limitMatch = sql.match(limitRegex);
+    
+    if (limitMatch) {
+      console.log(`[odbcService] Detectada cláusula LIMIT na consulta de teste, adaptando para SQL Anywhere`);
+      
+      const limit = parseInt(limitMatch[1], 10);
+      const offset = limitMatch[2] ? parseInt(limitMatch[2], 10) : null;
+      
+      if (offset) {
+        // SQL Anywhere não suporta LIMIT com offset diretamente
+        // Precisamos usar uma subconsulta ou procedimento armazenado
+        console.log(`[odbcService] Cláusula LIMIT com offset não é diretamente suportada em SQL Anywhere`);
+        
+        // Verificar se a consulta já tem ORDER BY, senão adicionar um para garantir consistência
+        const hasOrderBy = /\s+ORDER\s+BY\s+/i.test(sql);
+        
+        if (!hasOrderBy) {
+          // Se não tiver ORDER BY, adicionamos um padrão usando a primeira coluna
+          const selectMatch = sql.match(/SELECT\s+(?:TOP\s+\d+\s+)?(.+?)\s+FROM/i);
+          if (selectMatch && selectMatch[1]) {
+            const firstColumn = selectMatch[1].split(',')[0].trim();
+            sqlAjustado = sql.replace(limitRegex, '') + ` ORDER BY ${firstColumn}`;
+          } else {
+            sqlAjustado = sql.replace(limitRegex, '');
+          }
+        } else {
+          sqlAjustado = sql.replace(limitRegex, '');
+        }
+        
+        // Embrulhar em uma subconsulta com ROW_NUMBER()
+        sqlAjustado = `
+          SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER (ORDER BY (SELECT 1)) AS rownum
+            FROM (
+              ${sqlAjustado}
+            ) AS innerQuery
+          ) AS outerQuery
+          WHERE rownum > ${offset} AND rownum <= ${offset + limit}
+        `;
+      } else {
+        // Substituir LIMIT por TOP
+        sqlAjustado = sql.replace(/SELECT/i, `SELECT TOP ${limit}`).replace(limitRegex, '');
+      }
+      
+      console.log(`[odbcService] SQL adaptado: ${sqlAjustado.substring(0, 100)}${sqlAjustado.length > 100 ? '...' : ''}`);
+    }
+    
     let results;
     
     if (!isOdbcDriverAvailable) {
@@ -880,7 +1075,7 @@ async function testQuery(sql, connectionId) {
       
       // Usar conexão simulada
       const mockConn = createMockConnection(connectionDetails);
-      results = await mockConn.query(sql);
+      results = await mockConn.query(sqlAjustado);
       
       console.log(`[odbcService] Consulta SIMULADA executada, retornando ${results.length} registros`);
     } else {
@@ -891,11 +1086,21 @@ async function testQuery(sql, connectionId) {
         const connectionObj = await connect(numericConnectionId);
         
         // Executa a consulta real
-        results = await connectionObj.query(sql);
+        results = await connectionObj.query(sqlAjustado);
         
         console.log(`[odbcService] Consulta real executada com sucesso, retornando ${results.length} registros`);
       } catch (connError) {
         console.error(`[odbcService] Erro na conexão: ${connError.message}`);
+        
+        // Verificar se o erro está relacionado à sintaxe LIMIT
+        if (connError.message.toLowerCase().includes('syntax') && 
+            (sql.toLowerCase().includes('limit') || sqlAjustado.toLowerCase().includes('top'))) {
+          return {
+            success: false,
+            message: `Erro de sintaxe: A cláusula LIMIT não é suportada pelo SQL Anywhere. Tente usar 'SELECT TOP N' em vez de 'LIMIT N'. Erro original: ${connError.message}`
+          };
+        }
+        
         return {
           success: false,
           message: `Erro na conexão: ${connError.message}`
@@ -920,26 +1125,48 @@ async function testQuery(sql, connectionId) {
 }
 
 /**
- * Formata resultados no formato especificado
+ * Formata os resultados da consulta no formato desejado
  * @param {Array} results - Resultados da consulta
  * @param {string} format - Formato (json, csv, excel)
+ * @param {string} transformType - Tipo de transformação a ser aplicada (opcional)
  * @returns {any} - Resultados formatados
  */
-function formatResults(results, format = 'json') {
+function formatResults(results, format = 'json', transformType = null) {
   if (!results || !Array.isArray(results) || results.length === 0) {
+    console.log('[DEBUG] formatResults - Dados vazios ou inválidos.');
     return format === 'json' ? [] : '';
   }
   
+  // Log inicial dos dados recebidos
+  console.log(`[DEBUG] formatResults - Recebendo ${results.length} registros para formatação no formato '${format}'`);
+  
+  // Aplica a transformação de dados se necessário
+  let transformedResults = results;
+  if (transformType) {
+    console.log(`Aplicando transformação de tipo '${transformType}' antes da formatação`);
+    transformedResults = transformData(results, transformType);
+    console.log(`[DEBUG] formatResults - Transformação '${transformType}' concluída. Resultados: ${transformedResults.length} registros`);
+  } else {
+    console.log('[DEBUG] formatResults - Nenhuma transformação solicitada. Usando dados originais.');
+  }
+  
+  // Formata os dados de acordo com o formato desejado
+  let formattedOutput;
   switch (format.toLowerCase()) {
     case 'csv':
-      return convertToCSV(results);
+      formattedOutput = convertToCSV(transformedResults);
+      console.log(`[DEBUG] formatResults - Dados convertidos para CSV (${formattedOutput.length} bytes)`);
+      return formattedOutput;
     case 'excel':
       // Na implementação real, gerar Excel
       // Aqui só retornamos o CSV como exemplo
-      return convertToCSV(results);
+      formattedOutput = convertToCSV(transformedResults);
+      console.log(`[DEBUG] formatResults - Dados convertidos para 'excel' (temporariamente como CSV): ${formattedOutput.length} bytes`);
+      return formattedOutput;
     case 'json':
     default:
-      return results;
+      console.log(`[DEBUG] formatResults - Dados mantidos no formato JSON (${transformedResults.length} registros)`);
+      return transformedResults;
   }
 }
 
@@ -1196,6 +1423,20 @@ async function diagnosticarConexao(connectionData) {
         };
         return diagnostico;
       }
+      
+      // Cria uma cópia serializável dos detalhes da conexão
+      connectionDetails = {
+        nome: connectionDetails.nome || '',
+        dsn: connectionDetails.dsn || '',
+        connection_string: connectionDetails.connection_string || '',
+        usuario: connectionDetails.usuario || '',
+        senha: connectionDetails.senha || '',
+        host: connectionDetails.host || '',
+        porta: connectionDetails.porta || '',
+        banco: connectionDetails.banco || '',
+        driver: connectionDetails.driver || '',
+        params: connectionDetails.params || ''
+      };
     } else {
       // Se for um objeto com dados de conexão, usa diretamente
       console.log('[ODBC] Diagnosticando conexão com dados fornecidos');
@@ -1266,7 +1507,8 @@ async function diagnosticarConexao(connectionData) {
         };
       }
       
-      return diagnostico;
+      // Garantir que o objeto de diagnóstico seja serializável
+      return JSON.parse(JSON.stringify(diagnostico));
     }
     
     // Continuamos com o diagnóstico normal para outros drivers
@@ -1446,17 +1688,21 @@ async function diagnosticarConexao(connectionData) {
     return diagnostico;
   } catch (error) {
     console.error('[ODBC] Erro durante o diagnóstico:', error);
-    return {
+    
+    // Criar objeto de erro serializável
+    const erroSerializavel = {
       driver: { status: 'erro', mensagem: 'Erro durante verificação', sugestao: '' },
       servidor: { status: 'erro', mensagem: 'Erro durante verificação', sugestao: '' },
       credenciais: { status: 'erro', mensagem: 'Erro durante verificação', sugestao: '' },
       banco: { status: 'erro', mensagem: 'Erro durante verificação', sugestao: '' },
       resultado: { 
         status: 'erro', 
-        mensagem: `Erro ao realizar diagnóstico: ${error.message}`,
+        mensagem: `Erro ao realizar diagnóstico: ${error.message || 'Erro desconhecido'}`,
         sugestao: 'Tente novamente mais tarde ou contate o suporte'
       }
     };
+    
+    return erroSerializavel;
   }
 }
 
@@ -1661,6 +1907,214 @@ async function verificarConexaoAtiva(connectionId) {
   }
 }
 
+/**
+ * Transforma dados para o formato padronizado de acordo com o tipo especificado
+ * @param {Array} data - Dados da consulta a serem transformados
+ * @param {string} transformType - Tipo de transformação a ser aplicada (terceiros, produtos, etc.)
+ * @returns {Array} Dados transformados
+ */
+function transformData(data, transformType) {
+  if (!data || !Array.isArray(data) || data.length === 0) {
+    console.log('[DEBUG] transformData - Dados vazios ou inválidos. Nenhuma transformação aplicada.');
+    return data;
+  }
+  
+  console.log(`Aplicando transformação do tipo: ${transformType}`);
+  console.log(`[DEBUG] Dados originais (primeiros 2 registros):`); 
+  console.log(JSON.stringify(data.slice(0, 2), null, 2));
+  
+  let transformedData = [];
+  
+  switch (transformType) {
+    case 'terceiros':
+      transformedData = data.map(item => transformTerceirosData(item));
+      console.log(`[DEBUG] Transformação 'terceiros' aplicada em ${data.length} registros`);
+      break;
+      
+    // Outros tipos de transformação podem ser adicionados aqui
+    case 'produtos':
+      // transformedData = data.map(item => transformProdutosData(item));
+      transformedData = data; // Implementar no futuro
+      console.log(`[DEBUG] Transformação 'produtos' não implementada. Usando dados originais.`);
+      break;
+      
+    case 'movimentos':
+      // transformedData = data.map(item => transformMovimentosData(item));
+      transformedData = data; // Implementar no futuro
+      console.log(`[DEBUG] Transformação 'movimentos' não implementada. Usando dados originais.`);
+      break;
+      
+    default:
+      // Se o tipo de transformação não for conhecido, retorna os dados originais
+      transformedData = data;
+      console.log(`[DEBUG] Tipo de transformação '${transformType}' desconhecido. Usando dados originais.`);
+  }
+  
+  // Log dos resultados transformados
+  console.log(`[DEBUG] Dados após transformação '${transformType}' (primeiros 2 registros):`);
+  console.log(JSON.stringify(transformedData.slice(0, 2), null, 2));
+  
+  return transformedData;
+}
+
+/**
+ * Transforma dados do formato legado ou atual para o formato padronizado de terceiros
+ * @param {Object} data - Dados do terceiro a ser transformado
+ * @returns {Object} Dados transformados no formato padronizado
+ */
+function transformTerceirosData(data) {
+  // Verificar qual formato de entrada estamos recebendo
+  const isLegacyFormat = data.razao_emp !== undefined;
+  
+  console.log(`[DEBUG] transformTerceirosData - Formato de entrada: ${isLegacyFormat ? 'legado' : 'atual'}`);
+  console.log(`[DEBUG] transformTerceirosData - Dados originais:`, JSON.stringify(data, null, 2));
+  
+  let transformedData;
+  if (isLegacyFormat) {
+    // Transformação do formato legado (razao_emp, codi_emp, etc.)
+    transformedData = {
+      nome: data.razao_emp || '',
+      icone: '',
+      contatos: data.fone_emp || '',
+      inscricao: data.cgce_emp || '00000000000',
+      tipo_pessoa: (data.cgce_emp && data.cgce_emp.length > 11) ? 'Juridica' : 'Fisica',
+      endereco: data.ende_emp || '',
+      numero: data.numero || 1, // Valor padrão, já que não tem no formato de entrada
+      complemento: '',
+      bairro: data.bair_emp || '',
+      cep: data.cepe_emp || '',
+      email: '', // Não tem no formato de entrada
+      id_status: '',
+      contador: 1,
+      apelido: data.apel_emp || '',
+      inscricao_estadual: data.iest_emp || '',
+      inscricao_municipal: data.imun_emp || '',
+      observacoes: '',
+      id_cidades: 1, // Valor padrão, poderia vir de um mapeamento de cidades
+      id_uf: 1, // Valor padrão, poderia vir de um mapeamento de UFs
+      id_tributacao: '',
+      objeto_social: data.ramo_emp || ''
+    };
+  } else {
+    // Formato mais recente com campos como nome, cnpj, etc.
+    transformedData = {
+      nome: data.nome || data.razaoSocial || data.nomeFantasia || '',
+      icone: '',
+      contatos: data.contatos || data.telefone || data.celular || '',
+      inscricao: data.inscricao || data.cnpj || data.cpf || '00000000000',
+      tipo_pessoa: data.tipoPessoa || ((data.cnpj && data.cnpj.length > 11) ? 'Juridica' : 'Fisica'),
+      endereco: data.endereco || data.logradouro || '',
+      numero: data.numero || 0,
+      complemento: data.complemento || '',
+      bairro: data.bairro || '',
+      cep: data.cep || '',
+      email: data.email || '',
+      id_status: '',
+      contador: 1,
+      apelido: data.apelido || data.nomeFantasia || '',
+      inscricao_estadual: data.inscricaoEstadual || '',
+      inscricao_municipal: data.inscricaoMunicipal || '',
+      observacoes: '',
+      id_cidades: data.idCidades || data.idCidade || 1,
+      id_uf: data.idUf || 1,
+      id_tributacao: '',
+      objeto_social: data.objetoSocial || data.atividade || ''
+    };
+  }
+  
+  console.log(`[DEBUG] transformTerceirosData - Dados transformados:`, JSON.stringify(transformedData, null, 2));
+  
+  return transformedData;
+}
+
+/**
+ * Substitui parâmetros nomeados em uma consulta SQL
+ * @param {string} sql - Consulta SQL com parâmetros nomeados
+ * @param {Object} params - Objeto com os valores dos parâmetros
+ * @returns {string} Consulta SQL com os parâmetros substituídos
+ */
+function replaceQueryParams(sql, params) {
+  if (!sql || !params || Object.keys(params).length === 0) {
+    return sql;
+  }
+  
+  console.log(`[ODBC] Substituindo parâmetros na consulta SQL`);
+  
+  let processedSql = sql;
+  
+  // Substitui parâmetros no formato :param ou @param
+  for (const [key, value] of Object.entries(params)) {
+    // Escapa caracteres especiais em regex
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    
+    // Cria padrões para :param e @param
+    const colonPattern = new RegExp(`:${escapedKey}\\b`, 'g');
+    const atPattern = new RegExp(`@${escapedKey}\\b`, 'g');
+    
+    // Formata o valor para SQL
+    const formattedValue = formatSqlValue(value);
+    
+    // Substitui todas as ocorrências
+    processedSql = processedSql
+      .replace(colonPattern, formattedValue)
+      .replace(atPattern, formattedValue);
+  }
+  
+  console.log(`[ODBC] SQL com parâmetros substituídos: ${processedSql.substring(0, 100)}${processedSql.length > 100 ? '...' : ''}`);
+  return processedSql;
+}
+
+/**
+ * Formata um valor para uso em SQL
+ * @param {any} value - Valor a ser formatado
+ * @returns {string} Valor formatado para SQL
+ */
+function formatSqlValue(value) {
+  if (value === null || value === undefined) {
+    return 'NULL';
+  }
+  
+  if (typeof value === 'boolean') {
+    return value ? '1' : '0';
+  }
+  
+  if (typeof value === 'number') {
+    return value.toString();
+  }
+  
+  if (value instanceof Date) {
+    // Formato SQL Anywhere para data: 'YYYY-MM-DD HH:MM:SS.SSS'
+    return `'${value.toISOString().replace('T', ' ').replace('Z', '')}'`;
+  }
+  
+  // Para strings, escapa aspas simples duplicando-as
+  if (typeof value === 'string') {
+    return `'${value.replace(/'/g, "''")}'`;
+  }
+  
+  // Para arrays, converte para string com join
+  if (Array.isArray(value)) {
+    // Se o array está vazio, retorna NULL
+    if (value.length === 0) return 'NULL';
+    
+    // Se todos os valores são numéricos, não usar aspas
+    if (value.every(item => typeof item === 'number')) {
+      return `(${value.join(', ')})`;
+    }
+    
+    // Caso contrário, trata como strings com escape
+    const escapedValues = value.map(item => {
+      if (item === null || item === undefined) return 'NULL';
+      return `'${String(item).replace(/'/g, "''")}'`;
+    });
+    
+    return `(${escapedValues.join(', ')})`;
+  }
+  
+  // Para objetos ou outros tipos, converte para JSON string
+  return `'${JSON.stringify(value).replace(/'/g, "''")}'`;
+}
+
 module.exports = {
   connect,
   executeQuery,
@@ -1674,5 +2128,7 @@ module.exports = {
   diagnosticarSQLAnywhere,
   isDriverAvailable,
   listAvailableDrivers,
-  verificarConexaoAtiva
+  verificarConexaoAtiva,
+  transformData,
+  transformTerceirosData
 }; 

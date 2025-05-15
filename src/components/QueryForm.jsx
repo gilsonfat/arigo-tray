@@ -11,6 +11,7 @@ const QueryForm = ({ query, onSave, onCancel }) => {
     query: '', // Mudei de 'sql' para 'query' para corresponder ao backend
     conexao_id: '', // ID da conexão selecionada
     formato_saida: 'json',
+    transform_type: '', // Campo para transformação de dados
     ...(query || {}) // Preenche se editando
   });
   
@@ -94,12 +95,25 @@ const QueryForm = ({ query, onSave, onCancel }) => {
     const queryData = {
       nome: formData.nome,
       descricao: formData.descricao || '',
-      conexao_id: parseInt(formData.conexao_id, 10), // Convertendo para número 
+      conexao_id: parseInt(formData.conexao_id, 10), // Garantindo que conexao_id seja número
       query: formData.query, // Campo principal
       formato_saida: formData.formato_saida,
+      transform_type: formData.transform_type || null, // Novo campo para tipo de transformação
     };
     
     console.log('[QueryForm] Enviando dados para salvar:', queryData);
+    console.log('[QueryForm] conexao_id:', queryData.conexao_id, 'tipo:', typeof queryData.conexao_id);
+    
+    // Validação adicional para garantir que conexao_id é um número
+    if (isNaN(queryData.conexao_id)) {
+      console.error('[QueryForm] ERRO: conexao_id não é um número válido:', formData.conexao_id);
+      setFormError('Erro ao processar ID da conexão. Por favor, selecione novamente.');
+      return;
+    }
+    
+    // Desabilitar o botão de submit para evitar submissão duplicada
+    e.currentTarget.querySelector('button[type="submit"]')?.setAttribute('disabled', 'true');
+    
     onSave(queryData);
   };
 
@@ -199,6 +213,23 @@ const QueryForm = ({ query, onSave, onCancel }) => {
           <option value="csv">CSV</option>
           <option value="excel">Excel</option>
         </select>
+      </div>
+
+      <div>
+        <label htmlFor="transform_type" className="block text-sm font-medium text-gray-700">Tipo de Transformação</label>
+        <select
+          id="transform_type"
+          name="transform_type"
+          value={formData.transform_type}
+          onChange={handleChange}
+          className="mt-1 block w-full rounded-md border border-gray-300 shadow-sm p-2"
+        >
+          <option value="">Nenhuma transformação</option>
+          <option value="terceiros">Terceiros (Clientes/Fornecedores)</option>
+          <option value="produtos">Produtos (Não implementado)</option>
+          <option value="movimentos">Movimentos (Não implementado)</option>
+        </select>
+        <p className="text-xs text-gray-500 mt-1">Selecione um tipo de transformação se necessário padronizar os dados antes do envio.</p>
       </div>
 
       {/* Botão de Teste */}

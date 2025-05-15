@@ -11,7 +11,8 @@ const Button = ({
   isLoading = false,
   leftIcon = null,
   rightIcon = null,
-  title = ''
+  title = '',
+  form = null
 }) => {
   const baseClasses = "font-medium rounded focus:outline-none focus:ring-2 transition duration-150 ease-in-out";
   
@@ -36,12 +37,26 @@ const Button = ({
   
   const disabledClasses = "opacity-60 cursor-not-allowed";
   
+  // Manipulador especial para botões do tipo submit
+  const handleClick = (e) => {
+    if (onClick) {
+      onClick(e);
+    }
+    
+    // Se for um botão de submit e não tiver um handler onClick, não faça nada
+    // para permitir o comportamento padrão de submissão do formulário
+    if (type === 'submit' && !onClick) {
+      console.log('Botão tipo submit clicado - comportamento padrão');
+    }
+  };
+  
   return (
     <button
       type={type}
-      onClick={onClick}
+      onClick={handleClick}
       disabled={disabled || isLoading}
       title={title}
+      form={form}
       className={`
         ${baseClasses}
         ${variants[variant] || variants.primary}

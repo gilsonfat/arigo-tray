@@ -8,6 +8,7 @@ const HomePage = lazy(() => import('./pages/Home'));
 const ConnectionsPage = lazy(() => import('./pages/Connections'));
 const QueriesPage = lazy(() => import('./pages/Queries'));
 const TasksPage = lazy(() => import('./pages/Tasks'));
+const LogsPage = lazy(() => import('./pages/Logs'));
 
 // Define os itens do menu e seus caminhos
 const menuItems = [
@@ -15,6 +16,7 @@ const menuItems = [
   { path: '/connections', label: 'Conexoes', element: <ConnectionsPage /> },
   { path: '/queries', label: 'Consultas', element: <QueriesPage /> },
   { path: '/tasks', label: 'Tarefas', element: <TasksPage /> },
+  { path: '/logs', label: 'Logs', element: <LogsPage /> },
 ];
 
 function App() {

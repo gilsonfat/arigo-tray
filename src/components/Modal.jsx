@@ -8,9 +8,16 @@ const Modal = ({
   children, 
   size = 'md',
   showFooter = true,
+  noFooter = false,
+  footer,
   footerContent,
   preventClose = false 
 }) => {
+  // Determinar se deve mostrar o footer (considerando ambas as props)
+  const shouldShowFooter = noFooter ? false : showFooter;
+  // Usar footer ou footerContent (para compatibilidade)
+  const finalFooterContent = footer || footerContent;
+  
   // Impedir rolagem do body quando modal estiver aberto
   useEffect(() => {
     if (isOpen) {
@@ -46,6 +53,22 @@ const Modal = ({
     lg: 'max-w-2xl',
     xl: 'max-w-4xl',
     full: 'max-w-full mx-4'
+  };
+  
+  // Manipulador para submissão manual do formulário
+  const handleFormSubmit = () => {
+    console.log('Modal: Tentando submeter o formulário manualmente');
+    try {
+      const form = document.getElementById('modal-form');
+      if (form) {
+        console.log('Modal: Formulário encontrado, disparando evento submit');
+        form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+      } else {
+        console.error('Modal: Formulário não encontrado');
+      }
+    } catch (err) {
+      console.error('Modal: Erro ao submeter formulário:', err);
+    }
   };
   
   if (!isOpen) return null;
@@ -90,23 +113,26 @@ const Modal = ({
         </div>
         
         {/* Footer */}
-        {showFooter && (
+        {shouldShowFooter && (
           <div className="border-t px-6 py-4 flex justify-end space-x-3 bg-gray-50 rounded-b-lg">
-            {footerContent /* Render custom footer if provided */} 
+            {finalFooterContent /* Render custom footer if provided */} 
             {/* Default footer buttons if no custom content */}
-            {!footerContent && (
+            {!finalFooterContent && (
               <>
                 <button 
                   type="button" 
                   onClick={onClose}
-                  className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300"
+                  disabled={preventClose}
+                  className={`px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300 ${preventClose ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   Cancelar
                 </button>
                 <button 
                   type="submit" // Assumes form submission triggers save
                   form="modal-form" // Links to the form inside the modal body
-                  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                  disabled={preventClose}
+                  className={`px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300 ${preventClose ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  onClick={handleFormSubmit} // Adiciona o manipulador para submissão manual
                 >
                   Confirmar
                 </button>

@@ -2,7 +2,7 @@ const { spawn } = require('child_process');
 const http = require('http');
 const path = require('path');
 
-const PORT = 5176; // Porta do servidor Vite conforme configurado no package.json
+const PORT = 6500; // Porta do servidor Vite conforme configurado no vite.config.mjs
 const MAX_ATTEMPTS = 15; // Aumentado para dar mais tempo ao Vite iniciar
 const RETRY_INTERVAL = 1000; // 1 segundo
 

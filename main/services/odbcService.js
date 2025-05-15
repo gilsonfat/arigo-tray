@@ -431,6 +431,7 @@ async function diagnosticarConexao(connectionId) {
   try {
     // Recupera detalhes da conexão
     console.log('[ODBC] Buscando detalhes da conexão no banco local');
+    const startTime = Date.now();
     const connection = await database.getConnectionById(connectionId);
     
     if (!connection) {
@@ -439,212 +440,171 @@ async function diagnosticarConexao(connectionId) {
         mensagem: `Conexão ID ${connectionId} não encontrada no banco de dados`,
         sugestao: 'Verifique o ID da conexão ou crie uma nova conexão'
       };
-      return diagnostico;
+      return JSON.parse(JSON.stringify(diagnostico));
     }
     
-    console.log('[ODBC] Detalhes da conexão encontrados:', JSON.stringify({
+    // Copiar apenas as propriedades necessárias para evitar referências circulares
+    const connectionSimple = {
       id: connection.id,
-      name: connection.name,
-      driver: connection.driver,
-      server: connection.server,
-      port: connection.port,
-      database: connection.database,
-      username: connection.username
-      // senha omitida por segurança
-    }));
+      name: connection.name || '',
+      nome: connection.nome || connection.name || '',
+      driver: connection.driver || '',
+      server: connection.server || '',
+      host: connection.host || connection.server || '',
+      port: connection.port || '',
+      porta: connection.porta || connection.port || '',
+      database: connection.database || '',
+      banco: connection.banco || connection.database || '',
+      username: connection.username || '',
+      usuario: connection.usuario || connection.username || '',
+      password: connection.password || '',
+      senha: connection.senha || connection.password || ''
+    };
     
-    // 1. Verificação do driver ODBC
-    console.log('[ODBC] Verificando driver:', connection.driver);
-    try {
-      // Verifica se o módulo ODBC está disponível
-      if (!odbc || typeof odbc.connect !== 'function') {
-        diagnostico.driver = {
-          status: 'erro',
-          mensagem: 'Módulo ODBC não está disponível na aplicação',
-          sugestao: 'Verifique a instalação do módulo odbc no aplicativo'
+    // Registra o tempo de busca
+    console.log(`[ODBC] Detalhes da conexão obtidos em ${Date.now() - startTime}ms`);
+    
+    // Verificar se é uma conexão SQL Anywhere
+    const isSQLAnywhere = connectionSimple.driver && 
+                       connectionSimple.driver.toLowerCase().includes('sql anywhere');
+    
+    // Para economizar tempo, vamos executar apenas os testes básicos
+    // Verificação do servidor/host
+    if (!connectionSimple.host) {
+      diagnostico.servidor = {
+        status: 'erro',
+        mensagem: 'Host/Servidor não especificado',
+        sugestao: 'Forneça o endereço do servidor (IP ou nome)'
+      };
+    } else {
+      // Verificar formato simples do servidor
+      const validIP = /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$/.test(connectionSimple.host);
+      const validHostname = /^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$/.test(connectionSimple.host);
+      
+      diagnostico.servidor = {
+        status: (validIP || validHostname) ? 'verificar' : 'aviso',
+        mensagem: (validIP || validHostname) ? 
+          `Formato do servidor '${connectionSimple.host}' parece válido` : 
+          `Formato do servidor '${connectionSimple.host}' pode ser inválido`,
+        sugestao: (validIP || validHostname) ? 
+          'Verifique se o servidor está online e acessível na rede' : 
+          'Verifique se o endereço do servidor está correto'
+      };
+    }
+    
+    // Verificação rápida das credenciais
+    diagnostico.credenciais = {
+      status: (!connectionSimple.username || !connectionSimple.password) ? 'erro' : 'verificar',
+      mensagem: (!connectionSimple.username || !connectionSimple.password) ? 
+        'Usuário ou senha não fornecidos' : 
+        'Credenciais fornecidas, mas precisam ser validadas na conexão',
+      sugestao: (!connectionSimple.username || !connectionSimple.password) ? 
+        'Preencha o usuário e senha para a conexão' : 
+        'Verifique se o usuário e senha estão corretos'
+    };
+    
+    // Verificação rápida do banco de dados
+    diagnostico.banco = {
+      status: !connectionSimple.database ? 'erro' : 'verificar',
+      mensagem: !connectionSimple.database ? 
+        'Nome do banco de dados não fornecido' : 
+        `Nome do banco '${connectionSimple.database}' fornecido, mas precisa ser validado`,
+      sugestao: !connectionSimple.database ? 
+        'Preencha o nome do banco de dados' : 
+        'Verifique se o nome do banco está correto e existe no servidor'
+    };
+    
+    // Se for SQL Anywhere, já marcar resultado preliminar
+    if (isSQLAnywhere) {
+      diagnostico.driver = {
+        status: 'verificar',
+        mensagem: 'Driver SQL Anywhere identificado',
+        sugestao: 'Verifique se o driver SQL Anywhere está instalado corretamente'
+      };
+      
+      // Tentativa de conexão rápida
+      try {
+        console.log('[ODBC] Tentando verificação rápida de conexão para SQL Anywhere');
+        const isAtiva = await verificarConexaoAtiva(connectionId);
+        
+        if (isAtiva) {
+          diagnostico.resultado = {
+            status: 'verificar',
+            mensagem: 'Conexão SQL Anywhere parece estar funcionando',
+            sugestao: 'Para diagnóstico completo, execute testes específicos no banco'
+          };
+        } else {
+          diagnostico.resultado = {
+            status: 'verificar',
+            mensagem: 'Não foi possível confirmar a conexão SQL Anywhere',
+            sugestao: 'Verifique as configurações e tente novamente'
+          };
+        }
+      } catch (quickTestError) {
+        console.log('[ODBC] Erro na verificação rápida:', quickTestError.message);
+        diagnostico.resultado = {
+          status: 'verificar',
+          mensagem: `Erro na verificação rápida: ${quickTestError.message}`,
+          sugestao: 'Verifique as configurações de conexão e a disponibilidade do servidor'
         };
-      } else {
-        // Verifica se o driver especificado está disponível no sistema
-        const drivers = await listAvailableDrivers();
-        console.log('[ODBC] Drivers disponíveis:', drivers);
+      }
+    } else {
+      // Para outros drivers
+      diagnostico.driver = {
+        status: 'verificar',
+        mensagem: `Driver '${connectionSimple.driver || "não especificado"}' identificado`,
+        sugestao: 'Verifique se o driver está instalado corretamente'
+      };
+      
+      // Tentativa de conexão rápida
+      try {
+        console.log('[ODBC] Tentando verificação rápida de conexão normal');
+        const isAtiva = await verificarConexaoAtiva(connectionId);
         
-        const driverDisponivel = connection.driver && drivers.some(d => 
-          d.toLowerCase().includes(connection.driver.toLowerCase()));
-        
-        if (driverDisponivel) {
-          diagnostico.driver = {
+        if (isAtiva) {
+          diagnostico.resultado = {
             status: 'ok',
-            mensagem: `Driver '${connection.driver}' está disponível no sistema`,
+            mensagem: 'Conexão verificada com sucesso',
             sugestao: ''
           };
         } else {
-          diagnostico.driver = {
+          diagnostico.resultado = {
             status: 'erro',
-            mensagem: `Driver '${connection.driver}' não encontrado entre os drivers disponíveis`,
-            sugestao: `Instale o driver '${connection.driver}' ou escolha um dos seguintes drivers disponíveis: ${drivers.join(', ')}`
+            mensagem: 'Não foi possível estabelecer conexão',
+            sugestao: 'Verifique todos os parâmetros de conexão e tente novamente'
           };
         }
-      }
-    } catch (driverError) {
-      console.error('[ODBC] Erro ao verificar driver:', driverError);
-      diagnostico.driver = {
-        status: 'erro',
-        mensagem: `Erro ao verificar driver: ${driverError.message}`,
-        sugestao: 'Verifique se o driver ODBC está instalado corretamente no sistema'
-      };
-    }
-    
-    // 2. Verificação do servidor/host
-    console.log('[ODBC] Verificando servidor:', connection.server);
-    try {
-      if (!connection.server) {
-        diagnostico.servidor = {
-          status: 'erro',
-          mensagem: 'Host/Servidor não especificado',
-          sugestao: 'Forneça o endereço do servidor (IP ou nome)'
-        };
-      } else {
-        // Aqui poderíamos implementar um ping para verificar se o servidor está acessível
-        // Como isso pode ser limitado no Electron, apenas verificamos se o formato parece correto
-        const validIP = /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$/.test(connection.server);
-        const validHostname = /^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$/.test(connection.server);
-        
-        if (validIP || validHostname) {
-          diagnostico.servidor = {
-            status: 'verificar',
-            mensagem: `Formato do servidor '${connection.server}' parece válido`,
-            sugestao: 'Verifique se o servidor está online e acessível na rede'
-          };
-        } else {
-          diagnostico.servidor = {
-            status: 'aviso',
-            mensagem: `Formato do servidor '${connection.server}' pode ser inválido`,
-            sugestao: 'Verifique se o endereço do servidor está correto'
-          };
-        }
-      }
-    } catch (serverError) {
-      console.error('[ODBC] Erro ao verificar servidor:', serverError);
-      diagnostico.servidor = {
-        status: 'erro',
-        mensagem: `Erro ao verificar servidor: ${serverError.message}`,
-        sugestao: 'Verifique se o servidor está acessível'
-      };
-    }
-    
-    // 3. Verificação das credenciais
-    console.log('[ODBC] Verificando credenciais');
-    if (!connection.username || !connection.password) {
-      diagnostico.credenciais = {
-        status: 'erro',
-        mensagem: 'Usuário ou senha não fornecidos',
-        sugestao: 'Preencha o usuário e senha para a conexão'
-      };
-    } else {
-      diagnostico.credenciais = {
-        status: 'verificar',
-        mensagem: 'Credenciais fornecidas, mas precisam ser validadas na conexão',
-        sugestao: 'Verifique se o usuário e senha estão corretos'
-      };
-    }
-    
-    // 4. Verificação do banco de dados
-    console.log('[ODBC] Verificando banco de dados:', connection.database);
-    if (!connection.database) {
-      diagnostico.banco = {
-        status: 'erro',
-        mensagem: 'Nome do banco de dados não fornecido',
-        sugestao: 'Preencha o nome do banco de dados'
-      };
-    } else {
-      diagnostico.banco = {
-        status: 'verificar',
-        mensagem: `Nome do banco '${connection.database}' fornecido, mas precisa ser validado`,
-        sugestao: 'Verifique se o nome do banco está correto e existe no servidor'
-      };
-    }
-    
-    // 5. Tenta uma conexão real para verificar todos os componentes em conjunto
-    try {
-      // Constrói string de conexão
-      const connectionString = buildConnectionString(connection);
-      console.log('[ODBC] Testando conexão com string (sem senha):', 
-                 connectionString.replace(/PWD=[^;]*;/i, 'PWD=****;'));
-      
-      // Tenta estabelecer a conexão
-      const odbcConn = await odbc.connect(connectionString);
-      
-      // Executa uma consulta simples para verificar se a conexão está funcionando
-      await odbcConn.query('SELECT 1 AS teste');
-      
-      // Fecha a conexão após o teste
-      await odbcConn.close();
-      
-      // Se chegou aqui, a conexão foi bem-sucedida
-      console.log('[ODBC] Teste de conexão completo bem-sucedido');
-      
-      diagnostico.resultado = {
-        status: 'ok',
-        mensagem: `Conexão com '${connection.name}' estabelecida com sucesso`,
-        sugestao: ''
-      };
-    } catch (connectionError) {
-      console.error('[ODBC] Falha no teste de conexão:', connectionError.message);
-      
-      // Analisa a mensagem de erro para dar sugestões específicas
-      const errorMsg = connectionError.message.toLowerCase();
-      
-      if (errorMsg.includes('driver') || errorMsg.includes('dsn')) {
+      } catch (quickTestError) {
+        console.log('[ODBC] Erro na verificação rápida:', quickTestError.message);
         diagnostico.resultado = {
           status: 'erro',
-          mensagem: `Problema com driver ou DSN: ${connectionError.message}`,
-          sugestao: 'Verifique se o driver está instalado corretamente ou configure a DSN no Painel de Controle'
-        };
-      } else if (errorMsg.includes('login') || errorMsg.includes('password') || 
-                errorMsg.includes('senha') || errorMsg.includes('usuario') || 
-                errorMsg.includes('auth')) {
-        diagnostico.resultado = {
-          status: 'erro',
-          mensagem: `Problema com credenciais: ${connectionError.message}`,
-          sugestao: 'Verifique se o usuário e senha estão corretos'
-        };
-      } else if (errorMsg.includes('server') || errorMsg.includes('host') || 
-                errorMsg.includes('connect') || errorMsg.includes('network')) {
-        diagnostico.resultado = {
-          status: 'erro',
-          mensagem: `Problema de conexão com o servidor: ${connectionError.message}`,
-          sugestao: 'Verifique se o servidor está online e acessível, e se a porta está correta'
-        };
-      } else if (errorMsg.includes('database') || errorMsg.includes('banco')) {
-        diagnostico.resultado = {
-          status: 'erro',
-          mensagem: `Problema com o banco de dados: ${connectionError.message}`,
-          sugestao: 'Verifique se o nome do banco está correto e existe no servidor'
-        };
-      } else {
-        diagnostico.resultado = {
-          status: 'erro',
-          mensagem: `Falha na conexão: ${connectionError.message}`,
-          sugestao: 'Verifique todos os parâmetros de conexão e tente novamente'
+          mensagem: `Erro na verificação: ${quickTestError.message}`,
+          sugestao: 'Verifique as configurações de conexão'
         };
       }
     }
     
-    // Retorna o diagnóstico completo
-    return diagnostico;
+    console.log(`[ODBC] Diagnóstico concluído em ${Date.now() - startTime}ms`);
+    
+    // Garantir que o resultado seja serializável
+    return JSON.parse(JSON.stringify(diagnostico));
   } catch (error) {
     console.error('[ODBC] Erro durante o diagnóstico:', error);
-    return {
+    
+    // Criar objeto de erro serializável
+    const erroSerializavel = {
       driver: { status: 'erro', mensagem: 'Erro durante verificação', sugestao: '' },
       servidor: { status: 'erro', mensagem: 'Erro durante verificação', sugestao: '' },
       credenciais: { status: 'erro', mensagem: 'Erro durante verificação', sugestao: '' },
       banco: { status: 'erro', mensagem: 'Erro durante verificação', sugestao: '' },
       resultado: { 
         status: 'erro', 
-        mensagem: `Erro ao realizar diagnóstico: ${error.message}`,
+        mensagem: `Erro ao realizar diagnóstico: ${error.message || 'Erro desconhecido'}`,
         sugestao: 'Tente novamente mais tarde ou contate o suporte'
       }
     };
+    
+    return erroSerializavel;
   }
 }
 

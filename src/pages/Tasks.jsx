@@ -72,17 +72,56 @@ const Tasks = () => {
     setModalError(null);
     setActionResult(null);
     try {
-      let response;
-      // Garante que 'ativo' seja 0 ou 1 se o backend esperar int
+      console.log('Salvando tarefa com dados:', JSON.stringify(formData, null, 2));
+      
+      if (!formData) {
+        throw new Error('Dados do formulário são inválidos ou vazios');
+      }
+      
+      // Validação crítica dos campos obrigatórios
+      if (!formData.nome || !formData.cron || !formData.consulta_id || !formData.api_url) {
+        const camposFaltantes = [];
+        if (!formData.nome) camposFaltantes.push('Nome');
+        if (!formData.cron) camposFaltantes.push('Cron');
+        if (!formData.consulta_id) camposFaltantes.push('Consulta SQL');
+        if (!formData.api_url) camposFaltantes.push('URL da API');
+        
+        throw new Error(`Campos obrigatórios não preenchidos: ${camposFaltantes.join(', ')}`);
+      }
+      
+      // Prepara os dados garantindo os tipos corretos e validando
       const dataToSend = {
         ...formData,
+        nome: formData.nome.trim(),
+        descricao: (formData.descricao || '').trim(),
+        cron: formData.cron.trim(),
         ativo: formData.ativo ? 1 : 0,
+        consulta_id: parseInt(formData.consulta_id, 10),
+        api_url: formData.api_url.trim(),
+        api_metodo: formData.api_metodo || 'POST',
+        api_headers: formData.api_headers || '{}'
       };
+      
+      // Verifica se a conversão de consulta_id resultou em um número válido
+      if (isNaN(dataToSend.consulta_id)) {
+        throw new Error('ID da consulta inválido. Precisa ser um número.');
+      }
+      
+      console.log('Dados formatados para envio:', JSON.stringify(dataToSend, null, 2));
 
+      let response;
       if (currentTask?.id) {
+        console.log(`Atualizando tarefa ID ${currentTask.id}:`, JSON.stringify(dataToSend, null, 2));
         response = await updateTask(currentTask.id, dataToSend);
       } else {
+        console.log('Criando nova tarefa:', JSON.stringify(dataToSend, null, 2));
         response = await createTask(dataToSend);
+      }
+
+      console.log('Resposta do servidor:', JSON.stringify(response, null, 2));
+
+      if (!response) {
+        throw new Error('Nenhuma resposta recebida do servidor');
       }
 
       if (response.success) {
@@ -90,6 +129,7 @@ const Tasks = () => {
         fetchTasks(); // Recarrega
         setActionResult({ type: 'success', message: `Tarefa "${formData.nome}" ${currentTask?.id ? 'atualizada' : 'criada'} com sucesso!` });
       } else {
+        console.error('Erro retornado pelo servidor:', response.message);
         setModalError(response.message || `Falha ao ${currentTask?.id ? 'atualizar' : 'criar'} tarefa.`);
       }
     } catch (err) {
@@ -261,6 +301,50 @@ const Tasks = () => {
               variant="primary"
               isLoading={modalLoading}
               disabled={modalLoading}
+              onClick={(e) => {
+                console.log('Botão Salvar Tarefa clicado!');
+                try {
+                  // Verifica se o formulário existe
+                  const form = document.getElementById('modal-form');
+                  if (form) {
+                    console.log('Formulário encontrado, forçando submit manualmente');
+                    const submitEvent = new Event('submit', { cancelable: true, bubbles: true });
+                    
+                    // Adiciona um ouvinte de evento para depuração
+                    form.addEventListener('submit', function(event) {
+                      console.log('Evento submit capturado pelo listener:', event);
+                    }, { once: true });
+                    
+                    // Dispara o evento submit no formulário
+                    const submitSuccess = form.dispatchEvent(submitEvent);
+                    console.log('Resultado do dispatchEvent:', submitSuccess ? 'Não cancelado' : 'Cancelado');
+                    
+                    if (!submitSuccess) {
+                      console.log('O evento submit foi cancelado, tentando chamar diretamente');
+                      // Tenta acionar o submit diretamente
+                      const internalButton = document.getElementById('internal-submit-button');
+                      if (internalButton) {
+                        console.log('Botão interno encontrado, clicando');
+                        internalButton.click();
+                      }
+                    }
+                  } else {
+                    console.error('Formulário não encontrado!');
+                    // Tenta forçar um submit direto
+                    if (typeof handleSaveTask === 'function' && showModal) {
+                      console.log('Tentando salvar diretamente via handleSaveTask');
+                      // Obtém o formulário atual diretamente do DOM
+                      const formElements = document.querySelectorAll('form[id="modal-form"]');
+                      if (formElements.length > 0) {
+                        console.log('Formulário encontrado via seletor, tentando enviar');
+                        formElements[0].dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+                      }
+                    }
+                  }
+                } catch (err) {
+                  console.error('Erro ao tentar submeter o formulário:', err);
+                }
+              }}
             >
              {modalLoading ? 'Salvando...' : 'Salvar Tarefa'}
             </Button>
@@ -268,14 +352,16 @@ const Tasks = () => {
         }
       >
         {modalError && <Alert type="error" message={modalError} onClose={() => setModalError(null)} />}
-         {showModal && (
-            <TaskForm
-                task={currentTask}
-                onSave={handleSaveTask}
-                onCancel={handleCloseModal}
-                key={currentTask?.id || 'new-task'} // Reseta o form
-             />
-        )}
+        <div id="task-form-container">
+          {showModal && (
+              <TaskForm
+                  task={currentTask}
+                  onSave={handleSaveTask}
+                  onCancel={handleCloseModal}
+                  key={currentTask?.id || 'new-task'} // Reseta o form
+              />
+          )}
+        </div>
       </Modal>
 
       {/* Modal de Confirmação de Exclusão */}

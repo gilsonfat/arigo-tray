@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import Button from './Button';
 import Alert from './Alert';
 import LoadingSpinner from './LoadingSpinner';
-import { getQueries } from '../lib/ipcApi'; // API para buscar consultas
+import { getQueries, getQuery } from '../lib/ipcApi'; // API para buscar consultas
 
 // Componente para ajudar com a sintaxe Cron (opcional, mas útil)
 const CronHelper = () => (
@@ -32,6 +32,7 @@ const TaskForm = ({ task, onSave, onCancel }) => {
   const [queriesLoading, setQueriesLoading] = useState(true);
   const [formError, setFormError] = useState('');
   const [isHeadersValid, setIsHeadersValid] = useState(true);
+  const [selectedQuery, setSelectedQuery] = useState(null); // Armazena detalhes da consulta selecionada
 
   // Busca consultas disponíveis
   const fetchQueries = useCallback(async () => {
@@ -58,6 +59,45 @@ const TaskForm = ({ task, onSave, onCancel }) => {
   useEffect(() => {
     fetchQueries();
   }, [fetchQueries]);
+
+  // Busca detalhes da consulta quando o ID muda
+  useEffect(() => {
+    const fetchQueryDetails = async () => {
+      if (!formData.consulta_id) {
+        setSelectedQuery(null);
+        return;
+      }
+      
+      // Sempre garantir que consulta_id seja tratado como número
+      const queryId = parseInt(formData.consulta_id, 10);
+      
+      try {
+        console.log(`Buscando detalhes da consulta ID: ${queryId}`);
+        const response = await getQuery(queryId);
+        
+        if (response.success) {
+          console.log(`Detalhes da consulta obtidos:`, response.data);
+          setSelectedQuery(response.data);
+          
+          // Sugestão para URL da API com base no tipo de transformação
+          if (response.data.transform_type === 'terceiros' && !formData.api_url) {
+            setFormData(prev => ({
+              ...prev,
+              api_url: 'http://localhost:3000/terceiros',
+              api_headers: '{\n  "Content-Type": "application/json; charset=utf-8"\n}'
+            }));
+          }
+        } else {
+          console.error(`Erro ao buscar consulta: ${response.message}`);
+        }
+      } catch (error) {
+        console.error("Erro ao buscar detalhes da consulta:", error);
+        // Não interromper a UI em caso de erro na consulta
+      }
+    };
+    
+    fetchQueryDetails();
+  }, [formData.consulta_id]);
 
   // Valida JSON dos Headers
   useEffect(() => {
@@ -87,18 +127,78 @@ const TaskForm = ({ task, onSave, onCancel }) => {
   };
 
   const handleSubmit = (e) => {
+    console.log('Event submit capturado no TaskForm:', e.type);
     e.preventDefault();
+    
+    // Adiciona para debug
+    console.log('Submetendo formulário de tarefa com ID:', e.target.id);
+    console.log('Dados do formulário:', JSON.stringify(formData, null, 2));
+    
+    // Validação mais rigorosa
+    const nome = formData.nome?.trim() || '';
+    const cron = formData.cron?.trim() || '';
+    const consulta_id = formData.consulta_id ? String(formData.consulta_id) : '';
+    const api_url = formData.api_url?.trim() || '';
+    
+    console.log('Valores validados:', { nome, cron, consulta_id, api_url });
+    
     // Validação
-    if (!formData.nome || !formData.cron || !formData.consulta_id || !formData.api_url) {
-      setFormError('Preencha Nome, Cron, Consulta e URL da API.');
+    if (!nome || !cron || !consulta_id || !api_url) {
+      const missing = [];
+      if (!nome) missing.push('Nome');
+      if (!cron) missing.push('Cron');
+      if (!consulta_id) missing.push('Consulta');
+      if (!api_url) missing.push('URL da API');
+      
+      const errorMsg = `Preencha todos os campos obrigatórios: ${missing.join(', ')}`;
+      console.error('Erro de validação:', errorMsg);
+      setFormError(errorMsg);
       return;
     }
-     if (!isHeadersValid) {
-        setFormError('O formato dos Headers (JSON) é inválido.');
-        return;
-     }
-     // TODO: Adicionar validação de Cron se necessário (biblioteca externa?)
-    onSave(formData);
+    
+    if (!isHeadersValid) {
+      setFormError('O formato dos Headers (JSON) é inválido.');
+      return;
+    }
+    
+    // Garante que o formulário tenha campos numéricos como números e que strings sejam válidas
+    const preparedData = {
+      ...formData,
+      nome: nome,
+      descricao: formData.descricao?.trim() || '',
+      cron: cron,
+      consulta_id: parseInt(consulta_id, 10), // Converte para número
+      api_url: api_url,
+      api_metodo: formData.api_metodo || 'POST',
+      api_headers: formData.api_headers || '{}'
+    };
+    
+    console.log('Dados formatados para envio:', preparedData);
+    
+    try {
+      // Verifica se a string consulta_id pode ser convertida para número
+      if (isNaN(parseInt(consulta_id, 10))) {
+        throw new Error('ID da consulta é inválido. Selecione uma consulta válida.');
+      }
+      
+      // Validação básica de CRON
+      if (!/^[0-9*\/ -,]+$/.test(cron)) {
+        throw new Error('Expressão CRON inválida. Use apenas números, asteriscos e caracteres especiais válidos.');
+      }
+      
+      // Validação básica de URL
+      try {
+        new URL(api_url);
+      } catch (urlError) {
+        throw new Error('URL da API inválida. Insira uma URL completa e válida.');
+      }
+      
+      console.log('Validação do formulário concluída com sucesso. Enviando dados.');
+      onSave(preparedData);
+    } catch (error) {
+      console.error('Erro ao validar/salvar tarefa:', error);
+      setFormError(`Erro ao salvar tarefa: ${error.message}`);
+    }
   };
 
   const renderInputField = (id, label, required = false, type = "text", placeholder = "") => (
@@ -120,7 +220,12 @@ const TaskForm = ({ task, onSave, onCancel }) => {
   );
 
   return (
-    <form id="modal-form" onSubmit={handleSubmit} className="space-y-4">
+    <form 
+      id="modal-form" 
+      onSubmit={handleSubmit} 
+      className="space-y-4"
+      data-testid="task-form"
+    >
       {formError && <Alert type="error" message={formError} onClose={() => setFormError('')} />}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -174,20 +279,34 @@ const TaskForm = ({ task, onSave, onCancel }) => {
         {queriesLoading ? (
           <LoadingSpinner size="sm" message="Carregando consultas..." />
         ) : (
-          <select
-            id="consulta_id"
-            name="consulta_id"
-            value={formData.consulta_id}
-            onChange={handleChange}
-            required
-            disabled={queries.length === 0}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-          >
-            <option value="" disabled>{queries.length === 0 ? 'Nenhuma consulta SQL encontrada' : '-- Selecione a Consulta --'}</option>
-            {queries.map(q => (
-              <option key={q.id} value={q.id}>{q.nome}</option>
-            ))}
-          </select>
+          <>
+            <select
+              id="consulta_id"
+              name="consulta_id"
+              value={formData.consulta_id}
+              onChange={handleChange}
+              required
+              disabled={queries.length === 0}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
+            >
+              <option value="" disabled>{queries.length === 0 ? 'Nenhuma consulta SQL encontrada' : '-- Selecione a Consulta --'}</option>
+              {queries.map(q => (
+                <option key={q.id} value={q.id}>{q.nome}</option>
+              ))}
+            </select>
+            
+            {/* Mostrar informações sobre transformação de dados se disponível */}
+            {selectedQuery?.transform_type && (
+              <div className="mt-2 p-2 bg-blue-50 rounded border border-blue-200">
+                <p className="text-sm text-blue-700">
+                  <span className="font-medium">Transformação de dados:</span> {selectedQuery.transform_type}
+                  {selectedQuery.transform_type === 'terceiros' && (
+                    <span className="block mt-1 text-xs">Esta consulta será transformada para o formato padrão de terceiros antes do envio.</span>
+                  )}
+                </p>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -232,7 +351,25 @@ const TaskForm = ({ task, onSave, onCancel }) => {
         <p className="text-xs text-gray-500 mt-1">Insira os cabeçalhos HTTP como um objeto JSON válido.</p>
       </div>
 
-      {/* Botões de salvar/cancelar são controlados pelo Modal */}
+      {/* Botão de submit visível que estará disponível em caso de problemas */}
+      <div className="text-right pt-4 border-t border-gray-200 mt-8">
+        <button 
+          type="submit" 
+          className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+          id="form-submit-fallback"
+        >
+          Salvar Tarefa (Botão de Fallback)
+        </button>
+      </div>
+      
+      {/* Botão invisível para debug */}
+      <button 
+        type="submit" 
+        style={{ display: 'none' }}
+        id="internal-submit-button"
+      >
+        Submit Interno
+      </button>
     </form>
   );
 };

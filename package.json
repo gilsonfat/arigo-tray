@@ -7,15 +7,15 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
+    "serve": "vite preview",
     "lint": "eslint src",
-    "electron": "node scripts/run-electron.js",
-    "electron-dev": "concurrently --names \"VITE,ELECTRON\" --prefix-colors \"blue,green\" --kill-others \"vite --port 5176\" \"node scripts/start-electron.js\"",
+    "electron": "electron .",
+    "electron-dev": "node scripts/kill-processes.js && concurrently --names \"VITE,ELECTRON\" --prefix-colors \"blue,green\" --kill-others \"vite --port 6502\" \"wait-on http://localhost:6502 && electron .\"",
     "electron-debug": "ELECTRON_ENABLE_LOGGING=true electron .",
     "start-prod": "npm run build && npm run electron",
     "package": "npm run build && electron-builder build --win",
     "postinstall": "electron-builder install-app-deps",
-    "electron-build": "electron-builder"
+    "electron-build": "vite build && electron-builder"
   },
   "dependencies": {
     "electron-serve": "^1.2.0",

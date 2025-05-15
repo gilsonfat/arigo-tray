@@ -8,26 +8,36 @@ contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
     invoke: (channel, ...args) => {
       const validChannels = [
-        'get-connections', 'create-connection', 'update-connection', 'delete-connection', 'test-connection',
-        'get-queries', 'create-query', 'update-query', 'delete-query', 'execute-query', 'test-query',
-        'get-tasks', 'create-task', 'update-task', 'delete-task', 'execute-task',
+        'get-connections', 'get-connection', 'create-connection', 'update-connection', 'delete-connection', 'test-connection',
+        'get-queries', 'get-query', 'create-query', 'update-query', 'delete-query', 'execute-query', 'test-query',
+        'get-tasks', 'get-task', 'create-task', 'update-task', 'delete-task', 'execute-task',
         'sync-all', 'force-sync',
+        'get-logs', 'get-log-count',
+        'get-transformations', 'get-transformation',
+        'get-transformation-configs', 'get-transformation-config', 'save-transformation-config', 'delete-transformation-config',
         'diagnose-connection', 'get-odbc-drivers'
       ];
       if (validChannels.includes(channel)) {
-        console.log(`[preload] Invocando canal IPC: ${channel}`, args);
+        console.log(`[preload] Invocando canal IPC: ${channel}`, JSON.stringify(args, null, 2));
         try {
           return ipcRenderer.invoke(channel, ...args)
             .then(result => {
-              console.log(`[preload] Resultado IPC de ${channel}:`, result);
+              // Para canais de tarefa, logar mais detalhes
+              if (channel.includes('task')) {
+                console.log(`[preload] Resultado IPC de ${channel}:`, JSON.stringify(result, null, 2));
+              } else {
+                console.log(`[preload] Resultado IPC de ${channel}: `, result ? 'Success' : 'Null/undefined result');
+              }
               return result;
             })
             .catch(error => {
-              console.error(`[preload] Erro IPC em ${channel}:`, error);
+              console.error(`[preload] Erro IPC em ${channel}:`, error.message || 'Erro desconhecido');
+              console.error(`[preload] Stack do erro:`, error.stack || 'Stack não disponível');
               throw error; // Repassa o erro para ser tratado pelo cliente
             });
         } catch (error) {
-          console.error(`[preload] Erro ao invocar ${channel}:`, error);
+          console.error(`[preload] Erro ao invocar ${channel}:`, error.message || 'Erro desconhecido');
+          console.error(`[preload] Stack do erro:`, error.stack || 'Stack não disponível');
           throw error;
         }
       }

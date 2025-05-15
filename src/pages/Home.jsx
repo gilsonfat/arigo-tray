@@ -144,7 +144,7 @@ function Home() {
             </div>
             <div className="bg-gray-50 px-4 py-4 sm:px-6">
               <div className="text-sm">
-                <Link to="/" className="font-medium text-blue-600 hover:text-blue-500">
+                <Link to="/logs" className="font-medium text-blue-600 hover:text-blue-500">
                   Ver todos os logs
                 </Link>
               </div>
